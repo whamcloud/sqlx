@@ -33,6 +33,11 @@ async fn reversible(mut conn: PoolConnection<MySql>) -> anyhow::Result<()> {
 
     let migrator = Migrator::new(Path::new("tests/mysql/migrations_reversible")).await?;
 
+    // run only until first reversible migration
+    migrator
+        .run_through_version(&mut conn, 20220721124650)
+        .await?;
+
     // run migration
     migrator.run(&mut conn).await?;
 

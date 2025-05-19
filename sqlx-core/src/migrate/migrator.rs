@@ -255,4 +255,73 @@ impl Migrator {
 
         Ok(())
     }
+
+    /// Run up migrations against the database until a specific version.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use sqlx::migrate::MigrateError;
+    /// # fn main() -> Result<(), MigrateError> {
+    /// #     sqlx::__rt::test_block_on(async move {
+    /// use sqlx::migrate::Migrator;
+    /// use sqlx::sqlite::SqlitePoolOptions;
+    ///
+    /// let m = Migrator::new(std::path::Path::new("./migrations")).await?;
+    /// let pool = SqlitePoolOptions::new().connect("sqlite::memory:").await?;
+    /// m.run_through_version(&pool, 4).await
+    /// #     })
+    /// # }
+    /// ```
+    pub async fn run_through_version<'a, A>(
+        &self,
+        migrator: A,
+        target: i64,
+    ) -> Result<(), MigrateError>
+    where
+        A: Acquire<'a>,
+        <A::Connection as Deref>::Target: Migrate,
+    {
+        let mut conn = migrator.acquire().await?;
+
+        // lock the database for exclusive access by the migrator
+        if self.locking {
+            conn.lock().await?;
+        }
+
+        // creates [_migrations] table only if needed
+        // eventually this will likely migrate previous versions of the table
+        conn.ensure_migrations_table().await?;
+
+        let version = conn.dirty_version().await?;
+        if let Some(version) = version {
+            return Err(MigrateError::Dirty(version));
+        }
+
+        let applied_migrations = conn.list_applied_migrations().await?;
+        validate_applied_migrations(&applied_migrations, self)?;
+
+        let applied_migrations: HashMap<_, _> = applied_migrations
+            .into_iter()
+            .map(|m| (m.version, m))
+            .collect();
+
+        for migration in self
+            .iter()
+            .rev()
+            .filter(|m| m.migration_type.is_up_migration())
+            .filter(|m| applied_migrations.contains_key(&m.version))
+            .filter(|m| m.version <= target)
+        {
+            conn.apply(migration).await?;
+        }
+
+        // unlock the migrator to allow other migrators to run
+        // but do nothing as we already migrated
+        if self.locking {
+            conn.unlock().await?;
+        }
+
+        Ok(())
+    }
 }
