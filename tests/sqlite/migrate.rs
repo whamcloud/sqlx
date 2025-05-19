@@ -48,6 +48,9 @@ async fn reversible(mut conn: PoolConnection<Sqlite>) -> anyhow::Result<()> {
         .get(0);
     assert_eq!(res, 101);
 
+    let latest_version = migrator.latest_version(&mut conn).await?.unwrap();
+    assert_eq!(latest_version, 20220721125033);
+
     // roll back nothing (last version)
     migrator.undo(&mut conn, 20220721125033).await?;
 

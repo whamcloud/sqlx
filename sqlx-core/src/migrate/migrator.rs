@@ -110,6 +110,24 @@ impl Migrator {
         self.iter().any(|m| m.version == version)
     }
 
+    /// Get the latest version of the applied migrations.
+    pub async fn latest_version<'a, A>(&self, migrator: A) -> Result<Option<i64>, MigrateError>
+    where
+        A: Acquire<'a>,
+        <A::Connection as Deref>::Target: Migrate,
+    {
+        let mut conn = migrator.acquire().await?;
+
+        conn.ensure_migrations_table().await?;
+        let applied_migrations = conn.list_applied_migrations().await?;
+        let latest_version = applied_migrations
+            .iter()
+            .max_by(|x, y| x.version.cmp(&y.version))
+            .map(|migration| migration.version);
+
+        Ok(latest_version)
+    }
+
     /// Run any pending migrations against the database; and, validate previously applied migrations
     /// against the current migration source to detect accidental changes in previously-applied migrations.
     ///
